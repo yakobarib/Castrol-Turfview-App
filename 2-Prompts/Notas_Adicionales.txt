@@ -1,0 +1,5 @@
+Si lo usas en un Proyecto de Claude, añade en el contexto del proyecto ejemplos de archivos que ya hayas creado, para que el modelo aprenda tu estilo preferido.
+
+Puedes agregar una sección de restricciones si hay limitaciones específicas (por ejemplo, "solo compatibilidad con Excel 2016" o "sin macros VBA").
+
+Si quieres que sea más interactivo, puedo adaptarlo para que siempre empiece con un formulario de preguntas estructurado antes de generar.

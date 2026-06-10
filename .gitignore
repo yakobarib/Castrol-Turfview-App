@@ -1,0 +1,10 @@
+# Datos sensibles de clientes - no subir a repositorio público
+3-Bases de Datos/BD_CIFs_Clientes.xlsx
+
+# Archivos temporales de Windows
+Thumbs.db
+desktop.ini
+*.tmp
+
+# Archivos temporales de Office
+~$*
