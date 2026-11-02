@@ -309,6 +309,9 @@ let bdState = {
   tarifa: { handle: null, data: null, name: null, count: 0 }
 };
 
+// Nombre con el que se guarda en el navegador una BD embebida + altas hechas desde el formulario de avisos
+const BD_AUTO_NAME = 'BD embebida + correcciones manuales';
+
 // Use embedded data as initial fallback
 let CIF_ACTIVO    = CIF;     // starts with embedded, replaced if BD loaded
 let CATALOG_ACTIVO = CATALOG; // starts with embedded, replaced if BD loaded
@@ -438,7 +441,32 @@ async function tryRestoreData(tipo) {
   try {
     const stored = await idbGet('bd_data_' + tipo);
     if (!stored) return;
-    const { name, data, count } = JSON.parse(stored);
+    const parsed = JSON.parse(stored);
+    let { name, data, count } = parsed;
+
+    // Un guardado hecho con el formulario de avisos se creó sobre una versión
+    // anterior de la BD embebida y puede arrastrar referencias ya retiradas.
+    // Se parte siempre de la BD embebida actual y solo se conservan las altas manuales.
+    if (name === BD_AUTO_NAME) {
+      const base = tipo === 'cif'
+        ? CIF
+        : ((typeof BD_EMBED_CATALOG !== 'undefined' && BD_EMBED_CATALOG) ? BD_EMBED_CATALOG : CATALOG);
+      const manual = new Set(parsed.manualKeys || []);
+      const merged = { ...base };
+      let extras = 0;
+      if (tipo === 'cif') {
+        for (const [k, v] of Object.entries(data)) {
+          if (manual.has(k) || !(k in base)) { merged[k] = v; extras++; }
+        }
+      } else {
+        for (const k of manual) {
+          if (data[k] && !(k in base)) { merged[k] = data[k]; extras++; }
+        }
+      }
+      data = merged;
+      count = Object.keys(merged).length;
+      name = extras > 0 ? BD_AUTO_NAME : 'BD embebida';
+    }
 
     if (tipo === 'cif') {
       CIF_ACTIVO = data;
@@ -1159,6 +1187,7 @@ function renderFixPanel() {
 async function guardarCorrecciones() {
   const items = document.querySelectorAll('.fix-item');
   let skuUpdated = 0, cifUpdated = 0;
+  const skuKeys = [], cifKeys = [];
 
   items.forEach(item => {
     const tipo = item.dataset.type;
@@ -1171,12 +1200,14 @@ async function guardarCorrecciones() {
       if (!isNaN(L) && !isNaN(p) && !isNaN(v)) {
         CATALOG_ACTIVO[key] = { d, L, p, v };
         skuUpdated++;
+        skuKeys.push(key);
       }
     } else if (tipo === 'cif') {
       const nif = item.querySelector('[data-field="nif"]').value.trim();
       if (nif) {
         CIF_ACTIVO[key] = nif;
         cifUpdated++;
+        cifKeys.push(key);
       }
     }
   });
@@ -1186,16 +1217,29 @@ async function guardarCorrecciones() {
     return;
   }
 
-  if (skuUpdated > 0) await persistBD('tarifa');
-  if (cifUpdated > 0) await persistBD('cif');
+  if (skuUpdated > 0) await persistBD('tarifa', skuKeys);
+  if (cifUpdated > 0) await persistBD('cif', cifKeys);
 
   await procesarArchivos();
 }
 
-async function persistBD(tipo) {
+async function persistBD(tipo, nuevasClaves = []) {
   const activo = tipo === 'cif' ? CIF_ACTIVO : CATALOG_ACTIVO;
   const count  = Object.keys(activo).length;
-  const name   = 'BD embebida + correcciones manuales';
+  // Si la base es un archivo arrastrado a mano, se conserva su nombre (no se reconstruye desde la BD embebida)
+  const baseName = bdState[tipo] && bdState[tipo].name;
+  const name = (!baseName || baseName.startsWith('BD embebida')) ? BD_AUTO_NAME : baseName;
+
+  let manualKeys = nuevasClaves;
+  try {
+    const prev = await idbGet('bd_data_' + tipo);
+    if (prev) {
+      const p = JSON.parse(prev);
+      if (p.name === BD_AUTO_NAME && Array.isArray(p.manualKeys)) {
+        manualKeys = [...new Set([...p.manualKeys, ...nuevasClaves])];
+      }
+    }
+  } catch(e) { /* sin guardado previo legible */ }
 
   bdState[tipo] = { handle: null, data: activo, name, count };
   setDot(tipo, 'ok');
@@ -1205,7 +1249,7 @@ async function persistBD(tipo) {
   document.getElementById('dz-text-' + tipo).textContent = name;
 
   try {
-    await idbSet('bd_data_' + tipo, JSON.stringify({ name, data: activo, count }));
+    await idbSet('bd_data_' + tipo, JSON.stringify({ name, data: activo, count, manualKeys }));
   } catch(e) { console.warn('No se pudo guardar BD ' + tipo + ' en el navegador:', e); }
 
   updateBdUI();

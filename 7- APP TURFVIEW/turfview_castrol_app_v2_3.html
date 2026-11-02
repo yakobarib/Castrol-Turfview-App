@@ -320,6 +320,9 @@ let bdState = {
   tarifa: { handle: null, data: null, name: null, count: 0 }
 };
 
+// Nombre con el que se guarda en el navegador una BD embebida + altas hechas desde el formulario de avisos
+const BD_AUTO_NAME = 'BD embebida + correcciones manuales';
+
 // Use embedded data as initial fallback
 let CIF_ACTIVO    = CIF;     // starts with embedded, replaced if BD loaded
 let CATALOG_ACTIVO = CATALOG; // starts with embedded, replaced if BD loaded
@@ -449,7 +452,32 @@ async function tryRestoreData(tipo) {
   try {
     const stored = await idbGet('bd_data_' + tipo);
     if (!stored) return;
-    const { name, data, count } = JSON.parse(stored);
+    const parsed = JSON.parse(stored);
+    let { name, data, count } = parsed;
+
+    // Un guardado hecho con el formulario de avisos se creó sobre una versión
+    // anterior de la BD embebida y puede arrastrar referencias ya retiradas.
+    // Se parte siempre de la BD embebida actual y solo se conservan las altas manuales.
+    if (name === BD_AUTO_NAME) {
+      const base = tipo === 'cif'
+        ? CIF
+        : ((typeof BD_EMBED_CATALOG !== 'undefined' && BD_EMBED_CATALOG) ? BD_EMBED_CATALOG : CATALOG);
+      const manual = new Set(parsed.manualKeys || []);
+      const merged = { ...base };
+      let extras = 0;
+      if (tipo === 'cif') {
+        for (const [k, v] of Object.entries(data)) {
+          if (manual.has(k) || !(k in base)) { merged[k] = v; extras++; }
+        }
+      } else {
+        for (const k of manual) {
+          if (data[k] && !(k in base)) { merged[k] = data[k]; extras++; }
+        }
+      }
+      data = merged;
+      count = Object.keys(merged).length;
+      name = extras > 0 ? BD_AUTO_NAME : 'BD embebida';
+    }
 
     if (tipo === 'cif') {
       CIF_ACTIVO = data;
@@ -1042,6 +1070,156 @@ function procesarStock(rows, mes, año) {
   return stockRows;
 }
 
+// ─── GENERADOR DE .ODS PROPIO (sin SheetJS) ───────────────────────────────────
+// SheetJS 0.18.5 (bookType:'ods') genera archivos que Excel/LibreOffice abren
+// sin problema, pero que el portal de validación de Turfview rechaza como
+// "problemas estructurales" — incluso después de corregir el orden del
+// 'mimetype' dentro del zip (primer intento), la causa raíz seguía sin
+// resolverse. Se confirmó con datos reales que un .ods calcado de la
+// estructura mínima de odfpy (la librería ODF de referencia en Python) sí pasa
+// la validación del portal ("File Processed Successfully without Errors"), así
+// que se sustituye por completo el paso de escritura: en vez de pedirle a
+// SheetJS que escriba el .ods, se construye a mano el XML y el zip siguiendo
+// exactamente esa misma estructura mínima ya validada.
+function escapeXml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+const ODS_MANIFEST_XML =
+  `<?xml version='1.0' encoding='UTF-8'?>\n` +
+  `<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0">` +
+  `<manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/>` +
+  `<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>` +
+  `<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
+  `<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
+  `</manifest:manifest>`;
+
+const ODS_META_XML =
+  `<?xml version='1.0' encoding='UTF-8'?>\n` +
+  `<office:document-meta xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" office:version="1.2">` +
+  `<office:meta><meta:generator>Turfview Castrol App</meta:generator></office:meta>` +
+  `</office:document-meta>`;
+
+const ODS_STYLES_XML =
+  `<?xml version='1.0' encoding='UTF-8'?>\n` +
+  `<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" office:version="1.2">` +
+  `<office:styles/><office:automatic-styles></office:automatic-styles>` +
+  `</office:document-styles>`;
+
+function odsContentXml(sheetName, headers, rows) {
+  function cell(v) {
+    if (typeof v === 'number' && isFinite(v)) {
+      return `<table:table-cell office:value-type="float" office:value="${v}"><text:p>${v}</text:p></table:table-cell>`;
+    }
+    return `<table:table-cell office:value-type="string"><text:p>${escapeXml(v == null ? '' : v)}</text:p></table:table-cell>`;
+  }
+  const parts = [
+    `<?xml version='1.0' encoding='UTF-8'?>\n`,
+    `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" office:version="1.2">`,
+    `<office:automatic-styles/><office:body><office:spreadsheet>`,
+    `<table:table table:name="${escapeXml(sheetName)}">`,
+  ];
+  for (let i = 0; i < headers.length; i++) parts.push('<table:table-column/>');
+  parts.push('<table:table-row>');
+  for (const h of headers) parts.push(cell(h));
+  parts.push('</table:table-row>');
+  for (const row of rows) {
+    parts.push('<table:table-row>');
+    for (const v of row) parts.push(cell(v));
+    parts.push('</table:table-row>');
+  }
+  parts.push('</table:table></office:spreadsheet></office:body></office:document-content>');
+  return parts.join('');
+}
+
+const ODS_CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = ODS_CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+// Zip mínimo con todas las entradas sin comprimir (STORE); la primera entrada
+// de `entries` debe ser 'mimetype', tal y como exige ODF/OPC.
+function buildZipStore(entries) {
+  function u16(v) { return [v & 0xff, (v >>> 8) & 0xff]; }
+  function u32(v) { return [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]; }
+  function nameBytesOf(str) { return Array.from(str).map(c => c.charCodeAt(0)); } // nombres: solo ASCII
+
+  const localChunks = [], centralChunks = [], offsets = [];
+  let offset = 0;
+
+  for (const { name, data } of entries) {
+    const nameBytes = nameBytesOf(name);
+    const crc = crc32(data);
+    const size = data.length;
+
+    const local = new Uint8Array(30 + nameBytes.length + size);
+    local.set([0x50, 0x4b, 0x03, 0x04], 0);
+    local.set(u16(20), 4); local.set(u16(0), 6); local.set(u16(0), 8);
+    local.set(u16(0), 10); local.set(u16(0x21), 12);
+    local.set(u32(crc), 14); local.set(u32(size), 18); local.set(u32(size), 22);
+    local.set(u16(nameBytes.length), 26); local.set(u16(0), 28);
+    local.set(nameBytes, 30); local.set(data, 30 + nameBytes.length);
+
+    offsets.push(offset);
+    localChunks.push(local);
+    offset += local.length;
+
+    const central = new Uint8Array(46 + nameBytes.length);
+    central.set([0x50, 0x4b, 0x01, 0x02], 0);
+    central.set(u16(20), 4); central.set(u16(20), 6); central.set(u16(0), 8); central.set(u16(0), 10);
+    central.set(u16(0), 12); central.set(u16(0x21), 14);
+    central.set(u32(crc), 16); central.set(u32(size), 20); central.set(u32(size), 24);
+    central.set(u16(nameBytes.length), 28); central.set(u16(0), 30); central.set(u16(0), 32);
+    central.set(u16(0), 34); central.set(u16(0), 36); central.set(u32(0), 38);
+    central.set(u32(offsets[offsets.length - 1]), 42);
+    central.set(nameBytes, 46);
+    centralChunks.push(central);
+  }
+
+  function concat(arrs) {
+    let total = 0; for (const a of arrs) total += a.length;
+    const out = new Uint8Array(total);
+    let o = 0; for (const a of arrs) { out.set(a, o); o += a.length; }
+    return out;
+  }
+
+  const localSection = concat(localChunks);
+  const centralSection = concat(centralChunks);
+  const cdOffset = localSection.length;
+  const cdSize = centralSection.length;
+
+  const eocd = new Uint8Array(22);
+  eocd.set([0x50, 0x4b, 0x05, 0x06], 0);
+  eocd.set(u16(entries.length), 8); eocd.set(u16(entries.length), 10);
+  eocd.set(u32(cdSize), 12); eocd.set(u32(cdOffset), 16);
+
+  return concat([localSection, centralSection, eocd]);
+}
+
+function buildOds(sheetName, headers, rows) {
+  const enc = new TextEncoder();
+  const entries = [
+    { name: 'mimetype', data: enc.encode('application/vnd.oasis.opendocument.spreadsheet') },
+    { name: 'META-INF/manifest.xml', data: enc.encode(ODS_MANIFEST_XML) },
+    { name: 'content.xml', data: enc.encode(odsContentXml(sheetName, headers, rows)) },
+    { name: 'meta.xml', data: enc.encode(ODS_META_XML) },
+    { name: 'styles.xml', data: enc.encode(ODS_STYLES_XML) },
+  ];
+  return buildZipStore(entries);
+}
+
 // ─── GENERATE EXCEL VENTAS ───────────────────────────────────────────────────
 function generarExcelVentas(rows, filename) {
   const headers = [
@@ -1050,16 +1228,7 @@ function generarExcelVentas(rows, filename) {
     'Distributor SKU Description','Year','Month','Day','Volume Sold',
     'Gross Value Sold','Net Value Sold','COGS','Customer VAT No','Transaction Currency'
   ];
-  const wsData = [headers, ...rows];
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  // Column widths
-  ws['!cols'] = [
-    {wch:14},{wch:18},{wch:20},{wch:16},{wch:18},{wch:20},{wch:14},
-    {wch:38},{wch:6},{wch:5},{wch:5},{wch:15},{wch:18},{wch:16},{wch:16},{wch:16},{wch:10}
-  ];
-  XLSX.utils.book_append_sheet(wb, ws, 'SALES');
-  return XLSX.write(wb, { bookType: 'ods', type: 'array' });
+  return buildOds('SALES', headers, rows);
 }
 
 // ─── GENERATE EXCEL STOCK ────────────────────────────────────────────────────
@@ -1068,12 +1237,7 @@ function generarExcelStock(rows, filename) {
     'SKU Code','Distributor SKU Description','Warehouse Code',
     'Year','Month','Day','Stock Volume','Stock Value'
   ];
-  const wsData = [headers, ...rows];
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols'] = [{wch:14},{wch:42},{wch:16},{wch:6},{wch:7},{wch:5},{wch:16},{wch:15}];
-  XLSX.utils.book_append_sheet(wb, ws, 'STOCK');
-  return XLSX.write(wb, { bookType: 'ods', type: 'array' });
+  return buildOds('STOCK', headers, rows);
 }
 
 // ─── SHOW RESULTS ────────────────────────────────────────────────────────────
@@ -1170,6 +1334,7 @@ function renderFixPanel() {
 async function guardarCorrecciones() {
   const items = document.querySelectorAll('.fix-item');
   let skuUpdated = 0, cifUpdated = 0;
+  const skuKeys = [], cifKeys = [];
 
   items.forEach(item => {
     const tipo = item.dataset.type;
@@ -1182,12 +1347,14 @@ async function guardarCorrecciones() {
       if (!isNaN(L) && !isNaN(p) && !isNaN(v)) {
         CATALOG_ACTIVO[key] = { d, L, p, v };
         skuUpdated++;
+        skuKeys.push(key);
       }
     } else if (tipo === 'cif') {
       const nif = item.querySelector('[data-field="nif"]').value.trim();
       if (nif) {
         CIF_ACTIVO[key] = nif;
         cifUpdated++;
+        cifKeys.push(key);
       }
     }
   });
@@ -1197,16 +1364,29 @@ async function guardarCorrecciones() {
     return;
   }
 
-  if (skuUpdated > 0) await persistBD('tarifa');
-  if (cifUpdated > 0) await persistBD('cif');
+  if (skuUpdated > 0) await persistBD('tarifa', skuKeys);
+  if (cifUpdated > 0) await persistBD('cif', cifKeys);
 
   await procesarArchivos();
 }
 
-async function persistBD(tipo) {
+async function persistBD(tipo, nuevasClaves = []) {
   const activo = tipo === 'cif' ? CIF_ACTIVO : CATALOG_ACTIVO;
   const count  = Object.keys(activo).length;
-  const name   = 'BD embebida + correcciones manuales';
+  // Si la base es un archivo arrastrado a mano, se conserva su nombre (no se reconstruye desde la BD embebida)
+  const baseName = bdState[tipo] && bdState[tipo].name;
+  const name = (!baseName || baseName.startsWith('BD embebida')) ? BD_AUTO_NAME : baseName;
+
+  let manualKeys = nuevasClaves;
+  try {
+    const prev = await idbGet('bd_data_' + tipo);
+    if (prev) {
+      const p = JSON.parse(prev);
+      if (p.name === BD_AUTO_NAME && Array.isArray(p.manualKeys)) {
+        manualKeys = [...new Set([...p.manualKeys, ...nuevasClaves])];
+      }
+    }
+  } catch(e) { /* sin guardado previo legible */ }
 
   bdState[tipo] = { handle: null, data: activo, name, count };
   setDot(tipo, 'ok');
@@ -1216,7 +1396,7 @@ async function persistBD(tipo) {
   document.getElementById('dz-text-' + tipo).textContent = name;
 
   try {
-    await idbSet('bd_data_' + tipo, JSON.stringify({ name, data: activo, count }));
+    await idbSet('bd_data_' + tipo, JSON.stringify({ name, data: activo, count, manualKeys }));
   } catch(e) { console.warn('No se pudo guardar BD ' + tipo + ' en el navegador:', e); }
 
   updateBdUI();
