@@ -1030,7 +1030,7 @@ function procesarVentas(rows, mes, año) {
 
     saleRows.push([
       `${DISTRIBUTOR_CODE_LEGACY}-${serie}`, serie, 955, 'ESP-07026', Number(DISTRIBUTOR_CODE_LEGACY), 1,
-      sku, cat.d, año, mes, 30,
+      sku, limpiarDescripcion(cat.d), año, mes, 30,
       volumen, facBruta, facBruta, cogs, cif, 'EUR'
     ]);
   }
@@ -1064,7 +1064,7 @@ function procesarStock(rows, mes, año) {
     const qty = stockMap[sku] || 0;
     const vol = round2(qty * cat.L);
     const val = round2(vol * cat.v);
-    stockRows.push([sku, cat.d, Number(DISTRIBUTOR_CODE_LEGACY), año, mes, 30, vol, val]);
+    stockRows.push([sku, limpiarDescripcion(cat.d), Number(DISTRIBUTOR_CODE_LEGACY), año, mes, 30, vol, val]);
   }
 
   return stockRows;
@@ -1444,6 +1444,8 @@ function resetApp() {
 
 // ─── UTILS ──────────────────────────────────────────────────────────────────
 function round2(n) { return Math.round(n * 100) / 100; }
+// Castrol recibe la descripción con un único espacio entre palabras
+function limpiarDescripcion(s) { return String(s == null ? '' : s).replace(/\s+/g, ' ').trim(); }
 </script>
 </body>
 </html>
