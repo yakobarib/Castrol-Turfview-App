@@ -1485,7 +1485,7 @@ function abrirEmail() {
   const btn = document.getElementById('btn-email');
   const subj = encodeURIComponent(btn.dataset.subject || '');
   const body = encodeURIComponent(btn.dataset.body || '');
-  const to = ''; // la dirección de Ana se escribe en el borrador
+  const to = 'ana.ojedaruiz@castrol.com';
   const bcc = 'yakoba@adeivissa.com,albert@adeivissa.com,ernesto@adeivissa.com';
   window.location.href = `mailto:${to}?bcc=${bcc}&subject=${subj}&body=${body}`;
 }
