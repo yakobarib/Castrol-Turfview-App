@@ -96,6 +96,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .btn-email:hover{background:#F0EFE9}
 .btn-reset{width:100%;padding:8px;font-size:12px;font-weight:400;border-radius:7px;border:1px solid #D0CCC4;cursor:pointer;background:transparent;color:#888;transition:background .15s}
 .btn-reset:hover{background:#F5F5F3}
+.guide{background:#EAF3FC;border:1px solid #B5D4F4;border-radius:9px;padding:.85rem 1rem;margin-bottom:.75rem;color:#185FA5}
+.guide-title{font-size:13px;font-weight:600;color:#0C447C}
+.guide-sub{font-size:11px;color:#6A9DC0;margin:.15rem 0 .65rem}
+.guide-step{display:flex;gap:8px;align-items:flex-start;font-size:12px;line-height:1.55;margin-bottom:.5rem;cursor:pointer}
+.guide-step input{margin-top:3px;accent-color:#185FA5;flex-shrink:0;cursor:pointer}
+.guide-step.done>span{opacity:.5}
+.guide a{color:#0C447C;font-weight:600}
+.guide code{font-family:monospace;font-size:11px;background:#DCEBFA;border-radius:4px;padding:0 4px}
+.guide-det{margin-top:.55rem;font-size:12px}
+.guide-det summary{cursor:pointer;font-weight:600;color:#0C447C}
+.guide-det ul{margin:.35rem 0 0 1.1rem;line-height:1.6}
+.guide-det li{margin-bottom:.3rem}
 
 /* BD section */
 .bd-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#888;background:none;border:none;cursor:pointer;padding:0;margin-bottom:.9rem;transition:color .15s}
@@ -268,22 +280,31 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <div class="w-title">⚠ Avisos</div>
       <div id="warnings-content"></div>
     </div>
-    <div style="background:#EAF3FC;border:1px solid #B5D4F4;border-radius:9px;padding:.85rem 1rem;margin-bottom:.75rem">
-      <div style="font-size:12px;font-weight:600;color:#0C447C;margin-bottom:.5rem">
-        📎 Antes de enviar — 3 pasos
-      </div>
-      <div style="font-size:12px;color:#185FA5;line-height:1.8">
-        <div><span style="font-weight:600">1.</span> Descarga los dos archivos con los botones de arriba</div>
-        <div><span style="font-weight:600">2.</span> Pulsa "Abrir borrador en Outlook" — se abrirá el email listo</div>
-        <div><span style="font-weight:600">3.</span> Arrastra los dos archivos al borrador y pulsa <span style="font-weight:600">Enviar</span></div>
-      </div>
-      <div style="margin-top:.6rem;font-size:11px;color:#6A9DC0;font-style:italic">
-        ⚠ El protocolo de email no permite adjuntar archivos automáticamente — este paso es manual.
-      </div>
+    <div class="guide" id="guide">
+      <div class="guide-title">📋 Guía del mes — cargar en Turfview</div>
+      <div class="guide-sub" id="guide-sub"></div>
+      <div id="guide-steps"></div>
+      <details class="guide-det">
+        <summary>Si algo falla</summary>
+        <ul>
+          <li>Un solo error rechaza el fichero entero. El detalle está en Data Quality → <b>Error en la importación de datos</b> (pestaña Error Detail) y se puede descargar. También llega por correo al día siguiente (mira el correo no deseado).</li>
+          <li><b>«El producto no es válido»</b>: Castrol no tiene ese SKU. Si no lo vendéis, quítalo de la tarifa (Excel) y de la app; si es un producto real, pide a Castrol que lo dé de alta.</li>
+          <li><b>«Registro duplicado»</b>: o el mes ya estaba cargado (no lo vuelvas a subir) o hay dos líneas del mismo cliente y producto (la app ya las suma).</li>
+          <li><b>Cliente sin NIF</b>: rellénalo en el formulario de avisos antes de descargar los archivos; FastScan depende del NIF.</li>
+          <li>Tras corregir, vuelve a cargar el fichero completo. Las entradas fallidas antiguas se pueden borrar con la papelera.</li>
+        </ul>
+      </details>
+      <details class="guide-det">
+        <summary>Pendiente una sola vez (primera carga en Live)</summary>
+        <ul>
+          <li><b>Avisar a Ana</b> cuando hagas la primera carga en Live (botón de abajo).</li>
+          <li><b>Activar FastScan</b>: Maestro de distribuidores → Activate Loyalty Program, y aceptar el consentimiento para compartir datos de clientes.</li>
+        </ul>
+      </details>
     </div>
     <button class="btn-email" id="btn-email" onclick="abrirEmail()">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.2"/><path d="M1 5l7 5 7-5" stroke="currentColor" stroke-width="1.2"/></svg>
-      Abrir borrador en Outlook
+      Abrir borrador en Outlook — avisar a Ana
     </button>
     <button class="btn-reset" onclick="resetApp()">← Procesar otro mes</button>
   </div>
@@ -1277,11 +1298,12 @@ function mostrarResultados(saleRows, stockRows, nameSale, nameStock, warnings) {
   // Email button
   const mesNombre = MESES[selMes];
   const mesCapital = mesNombre.charAt(0).toUpperCase() + mesNombre.slice(1);
-  const emailSubject = `Turfview Castrol – Ventas y Stock ${mesCapital} ${selAño}`;
-  const emailBody = `Adjunto archivos Turfview de Castrol pertenecientes a ventas y stock del mes de ${mesNombre} de ${selAño}.\n\nSaludos.`;
+  const emailSubject = `Turfview Castrol – Carga de ${mesCapital} ${selAño}`;
+  const emailBody = `Hola Ana,\n\nHe cargado en Turfview los ficheros de ${mesNombre} de ${selAño} (${nameSale} y ${nameStock}). Quedo atento a cualquier incidencia.\n\nSaludos.`;
   document.getElementById('btn-email').dataset.subject = emailSubject;
   document.getElementById('btn-email').dataset.body = emailBody;
 
+  renderGuia(nameSale, nameStock);
   document.getElementById('results-panel').classList.add('visible');
   document.getElementById('results-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -1416,12 +1438,54 @@ function downloadFile(type) {
   URL.revokeObjectURL(url);
 }
 
+// ─── GUÍA DEL MES ────────────────────────────────────────────────────────────
+function claveGuia() { return 'turfview_guia_' + selAño + String(selMes + 1).padStart(2, '0'); }
+
+function guiaLeer() {
+  try { return JSON.parse(localStorage.getItem(claveGuia()) || '{}'); } catch(e) { return {}; }
+}
+
+function guiaMarcar(id, marcado) {
+  const fila = document.getElementById('guide-step-' + id);
+  if (fila) fila.classList.toggle('done', marcado);
+  try {
+    const estado = guiaLeer();
+    if (marcado) estado[id] = true; else delete estado[id];
+    localStorage.setItem(claveGuia(), JSON.stringify(estado));
+  } catch(e) { /* sin almacenamiento: las casillas funcionan pero no se recuerdan */ }
+}
+
+function renderGuia(nameSale, nameStock) {
+  const mesNombre = MESES[selMes];
+  const mesSig = MESES[(selMes + 1) % 12];
+  const añoSig = selAño + (selMes === 11 ? 1 : 0);
+  document.getElementById('guide-sub').textContent =
+    'Periodo: ' + mesNombre + ' ' + selAño + ' · Fecha límite: antes del día 5 de ' + mesSig + ' de ' + añoSig;
+
+  const pasos = [
+    `<b>Descarga los dos archivos</b> de arriba: <code>${escHtml(nameSale)}</code> y <code>${escHtml(nameStock)}</code>.`,
+    `<b>Entra en Turfview Producción</b>: <a href="https://www.castrolturfview.com/" target="_blank" rel="noopener">www.castrolturfview.com</a> (las pruebas están en <a href="https://train.castrolturfview.com/" target="_blank" rel="noopener">train.castrolturfview.com</a>; comprueba la dirección antes de subir nada). Menú: <b>Administración → Data/File Management → Distributor File Testing and Upload</b>.`,
+    `<b>Valida (recomendado)</b> en la pestaña <b>File Validation</b>: elige RECAMBIOS IBIZA, S.A., sube un archivo y pulsa <b>Start Validation</b>. Debe salir «File Processed Successfully without Errors». Repite con el otro archivo. Solo comprueba la estructura; los códigos de producto se revisan al procesar.`,
+    `<b>Carga</b> en la pestaña <b>Distributor File Upload</b>: elige el distribuidor, sube el archivo, marca <b>Process File (Overnight)</b> y pulsa <b>Upload</b>. Hazlo <b>una sola vez</b> con cada archivo: un mes ya cargado puede rechazarse como duplicado. El mensaje verde indica que queda en cola.`,
+    `<b>Revisa el siguiente día laborable</b>: <b>Administración → Data Quality → Estado de los datos de recibos</b>. Pon la fecha de finalización en hoy o posterior y pulsa Filtrar. Los dos archivos deben aparecer como «Processed Successfully» con 0 errores. Es normal que el portal cuente 2 registros menos que las líneas de la app.`
+  ];
+
+  const hechos = guiaLeer();
+  document.getElementById('guide-steps').innerHTML = pasos.map((texto, i) => {
+    const id = String(i + 1);
+    const marcado = !!hechos[id];
+    return `<label class="guide-step${marcado ? ' done' : ''}" id="guide-step-${id}">` +
+           `<input type="checkbox"${marcado ? ' checked' : ''} onchange="guiaMarcar('${id}', this.checked)">` +
+           `<span>${texto}</span></label>`;
+  }).join('');
+}
+
 // ─── EMAIL ───────────────────────────────────────────────────────────────────
 function abrirEmail() {
   const btn = document.getElementById('btn-email');
   const subj = encodeURIComponent(btn.dataset.subject || '');
   const body = encodeURIComponent(btn.dataset.body || '');
-  const to = 'josep.casacuberta@adparts.com,franc.dittman@adparts.com';
+  const to = ''; // la dirección de Ana se escribe en el borrador
   const bcc = 'yakoba@adeivissa.com,albert@adeivissa.com,ernesto@adeivissa.com';
   window.location.href = `mailto:${to}?bcc=${bcc}&subject=${subj}&body=${body}`;
 }
