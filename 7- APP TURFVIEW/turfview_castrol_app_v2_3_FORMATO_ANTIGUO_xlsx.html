@@ -1150,6 +1150,7 @@ function renderFixPanel() {
 
   if (sinCatalogo.length > 0) {
     html += `<div class="fix-group-title">📦 SKU nuevo(s) — completa los datos de catálogo</div>`;
+    html += `<div class="fix-hint" style="margin:0 0 .5rem">Los precios van <b>por LITRO</b>, no por envase (una garrafa de 5 L a 46 € son 9,2 €/L). «Litros por unidad» son los litros de cada unidad que cuenta Skrit.</div>`;
     sinCatalogo.forEach(item => {
       const desc = escHtml(item.descripcion);
       html += `
@@ -1157,9 +1158,9 @@ function renderFixPanel() {
           <div class="fix-label">SKU <b>${escHtml(item.sku)}</b>${item.descripcion ? ' — ' + desc : ''}</div>
           <div class="fix-inputs">
             <input class="fix-input" data-field="d" placeholder="Descripción" value="${desc}">
-            <input class="fix-input" data-field="L" placeholder="Litros/ud" type="number" step="0.01">
-            <input class="fix-input" data-field="p" placeholder="€/L venta" type="number" step="0.0001">
-            <input class="fix-input" data-field="v" placeholder="€/L coste" type="number" step="0.0001">
+            <input class="fix-input" data-field="L" placeholder="Litros por unidad" type="number" step="0.01">
+            <input class="fix-input" data-field="p" placeholder="Venta €/LITRO" type="number" step="0.0001">
+            <input class="fix-input" data-field="v" placeholder="Coste €/LITRO" type="number" step="0.0001">
           </div>
         </div>`;
     });
@@ -1184,10 +1185,43 @@ function renderFixPanel() {
   return html;
 }
 
+// Precio habitual (€/L) de la familia del producto (EDGE, GTX, Spheerol...) para detectar
+// precios de envase puestos como precio por litro
+function referenciaPrecios(descripcion) {
+  const mediana = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor((s.length - 1) / 2)]; };
+  const primera = t => String(t || '').trim().split(/\s+/)[0].toUpperCase();
+  const familia = primera(descripcion);
+  const todos = Object.values(CATALOG_ACTIVO).filter(e => e && e.p > 0 && e.v > 0);
+  const misma = familia ? todos.filter(e => primera(e.d) === familia) : [];
+  const usaFamilia = misma.length >= 5;
+  const base = usaFamilia ? misma : todos;
+  return {
+    medP: mediana(base.map(e => e.p)),
+    medV: mediana(base.map(e => e.v)),
+    factor: usaFamilia ? 2.5 : 4,
+    donde: usaFamilia ? 'los productos ' + familia : 'el catálogo'
+  };
+}
+
+function avisosPrecios(altas) {
+  const fmt = n => n.toLocaleString('es-ES', { maximumFractionDigits: 2 });
+  const pista = 'Los precios van POR LITRO, no por envase (una garrafa de 5 L a 46 € son 9,2 €/L).';
+  const avisos = [];
+  for (const a of altas) {
+    const ref = referenciaPrecios(a.d);
+    if (a.p > ref.medP * ref.factor)
+      avisos.push(`${a.key}: la venta sale a ${fmt(a.p)} €/L y lo habitual en ${ref.donde} es unos ${fmt(ref.medP)} €/L. ${pista}`);
+    if (a.v > ref.medV * ref.factor)
+      avisos.push(`${a.key}: el coste sale a ${fmt(a.v)} €/L y lo habitual en ${ref.donde} es unos ${fmt(ref.medV)} €/L. ${pista}`);
+    if (a.p < a.v)
+      avisos.push(`${a.key}: la venta (${fmt(a.p)} €/L) es menor que el coste (${fmt(a.v)} €/L).`);
+  }
+  return avisos;
+}
+
 async function guardarCorrecciones() {
   const items = document.querySelectorAll('.fix-item');
-  let skuUpdated = 0, cifUpdated = 0;
-  const skuKeys = [], cifKeys = [];
+  const altasSku = [], altasCif = [];
 
   items.forEach(item => {
     const tipo = item.dataset.type;
@@ -1197,28 +1231,26 @@ async function guardarCorrecciones() {
       const L = parseFloat(item.querySelector('[data-field="L"]').value);
       const p = parseFloat(item.querySelector('[data-field="p"]').value);
       const v = parseFloat(item.querySelector('[data-field="v"]').value);
-      if (!isNaN(L) && !isNaN(p) && !isNaN(v)) {
-        CATALOG_ACTIVO[key] = { d, L, p, v };
-        skuUpdated++;
-        skuKeys.push(key);
-      }
+      if (L > 0 && p > 0 && v > 0) altasSku.push({ key, d, L, p, v });
     } else if (tipo === 'cif') {
       const nif = item.querySelector('[data-field="nif"]').value.trim();
-      if (nif) {
-        CIF_ACTIVO[key] = nif;
-        cifUpdated++;
-        cifKeys.push(key);
-      }
+      if (nif) altasCif.push({ key, nif });
     }
   });
 
-  if (skuUpdated === 0 && cifUpdated === 0) {
+  if (altasSku.length === 0 && altasCif.length === 0) {
     alert('Rellena al menos un campo (litros, precio y coste para un SKU, o el NIF para un cliente) antes de guardar.');
     return;
   }
 
-  if (skuUpdated > 0) await persistBD('tarifa', skuKeys);
-  if (cifUpdated > 0) await persistBD('cif', cifKeys);
+  const avisos = avisosPrecios(altasSku);
+  if (avisos.length > 0 && !confirm(avisos.join('\n\n') + '\n\n¿Guardar igualmente?')) return;
+
+  altasSku.forEach(a => { CATALOG_ACTIVO[a.key] = { d: a.d, L: a.L, p: a.p, v: a.v }; });
+  altasCif.forEach(a => { CIF_ACTIVO[a.key] = a.nif; });
+
+  if (altasSku.length > 0) await persistBD('tarifa', altasSku.map(a => a.key));
+  if (altasCif.length > 0) await persistBD('cif', altasCif.map(a => a.key));
 
   await procesarArchivos();
 }
